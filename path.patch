@@ -1,0 +1,75 @@
+diff --git a/README.md b/README.md
+index 91200a3..7ee702a 100644
+--- a/README.md
++++ b/README.md
+@@ -24,6 +24,8 @@ session/XDG autostart management in Systemd-managed environments.
+ > only way to properly clean up the environment in this case is to run
+ > `loginctl terminate-user ""`.
+ 
++![uwsm select (via whiptail)](uwsm_select.png)
++
+ ## Concepts and features
+ 
+ <details><summary>
+diff --git a/uwsm/main.py b/uwsm/main.py
+index d13208d..fe79f63 100644
+--- a/uwsm/main.py
++++ b/uwsm/main.py
+@@ -1429,10 +1429,12 @@ def generate_units():
+     )
+     # for bindpid use lightweight waitpid binary if available,
+     # otherwise use aux waitpid shim
+-    if which("waitpid"):
+-        bindpid_cmd = "waitpid -e"
++    # Ensure that the binary can be found in the service file
++    waitpid_path = which("waitpid")
++    if waitpid_path:
++        bindpid_cmd = f"{waitpid_path} -e"
+     else:
+-        bindpid_cmd = "uwsm aux waitpid"
++        bindpid_cmd = f"{BIN_PATH} aux waitpid"
+     update_unit(
+         "wayland-session-bindpid@.service",
+         dedent(
+@@ -2631,8 +2633,13 @@ def prepare_env():
+     random_mark = f"MARK_{random_hex(16)}_MARK"
+     shell_code = prepare_env_gen_sh(random_mark)
+ 
++    sh_path = which("sh")
++    if not sh_path:
++        print_error(f'"sh" is not in PATH!')
++        sys.exit(1)
++    
+     sprc = subprocess.run(
+-        ["sh", "-"],
++        [sh_path, "-"],
+         text=True,
+         input=shell_code,
+         capture_output=True,
+@@ -3772,11 +3779,6 @@ def fill_wm_globals():
+     else:
+         print_debug(f"Compositor ID is an executable: {CompGlobals.id}")
+ 
+-        # check exec
+-        if not which(CompGlobals.id):
+-            print_error(f'"{CompGlobals.id}" is not in PATH!')
+-            sys.exit(1)
+-
+         CompGlobals.cmdline = Args.parsed.wm_cmdline
+ 
+         # this does not happen in aux exec mode
+@@ -3824,6 +3826,10 @@ def fill_wm_globals():
+         "(^[^a-zA-Z]|[^a-zA-Z0-9_])+", "_", CompGlobals.cmdline[0]
+     ).lower()
+ 
++    if not which(CompGlobals.bin_id):
++        print_error(f'"{CompGlobals.bin_id}" is not in PATH!')
++        sys.exit(1)
++
+     return True
+ 
+ 
+diff --git a/uwsm_select.png b/uwsm_select.png
+new file mode 100644
+index 0000000..4ab3cf6
+Binary files /dev/null and b/uwsm_select.png differ
