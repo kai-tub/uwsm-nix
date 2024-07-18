@@ -38,75 +38,19 @@
     );
     packages = eachSystem (system: let
       pkgs = pkgsFor.${system};
-      version = "0.16.3";
+      version = "0.17.0";
     in {
-      default = pkgs.stdenv.mkDerivation rec {
-        name = "uwsm";
-        meta = {
-          mainProgram = "uwsm";
-        };
+      default = pkgs.callPackage ./nix/uwsm.nix {
         inherit version;
-        src = pkgs.fetchFromGitHub {
-          owner = "Vladimir-csp";
-          repo = "uwsm";
-          rev = "v${version}";
-          hash = "sha256-JDP+fuZJUUDXZ/KLDjR3D4RlnvMHJkOOVREOv2KM0DY=";
-        };
-        nativeBuildInputs = [
-          pkgs.makeBinaryWrapper
-        ];
-        buildInputs = with pkgs; [
-          meson
-          ninja
-          pkg-config
-          scdoc
-        ];
-        propagatedBuildInputs = [
-          # these could be optional
-          # and wrapped in a package
-          pkgs.util-linux # waitpid
-          pkgs.newt # whiptail
-          pkgs.fuzzel # fuzzel
-          pkgs.libnotify # notify
-          pkgs.bash # sh
-          (pkgs.python3.withPackages (
-            ps: [
-              ps.pydbus
-              ps.dbus-python
-              ps.pyxdg
-            ]
-          ))
-        ];
-        mesonFlags = [
-          "--prefix=$out"
-        ];
-        dontConfigure = true;
-        patches = [
-          ./path.patch # upstream patch!
-        ];
-        buildPhase = ''
-          runHook preBuild
-
-          mkdir $out
-          meson setup --prefix=$out build
-
-          runHook postBuild
-        '';
-        installPhase = ''
-          runHook preInstall
-
-          meson install -C build
-
-          runHook postInstall
-        '';
-        postInstall = ''
-          wrapProgram $out/bin/uwsm \
-            --prefix PATH : ${pkgs.lib.makeBinPath ([
-              pkgs.hyprland # window-manager <- should be managed via a module
-              # or should there be different packages depending on the option?
-            ]
-            ++ propagatedBuildInputs)}
-        '';
+        withHyprland = true;
+      };
+      uwsm-hyprland = pkgs.callPackage ./nix/uwsm.nix {
+        inherit version;
+        withHyprland = true;
+      };
+      uwsm-sway = pkgs.callPackage ./nix/uwsm.nix {
+        inherit version;
+        withSway = true;
       };
       uwsmTest = pkgs.nixosTest {
         name = "uwsmTest";
@@ -124,6 +68,7 @@
             ...
           }: let
             user = "kai";
+            test-pkg = self.packages.${system}.uwsm-hyprland;
           in {
             imports = [
               inputs.home-manager.nixosModules.home-manager
@@ -138,35 +83,34 @@
                 };
                 programs.hyprland.enable = true;
                 services.dbus.implementation = "broker";
-                # FUTURE: Wrap this inside of a module/hmModule wrapper
-                # that sets all of the crap correctly.
+                # THIS should be externalized to a module!
                 services.displayManager.sessionPackages = let
-                  hyprland-uwsm-text = pkgs.writeText "hyprland-uwsm.desktop" ''
+                  hyprland_uwsm-text = pkgs.writeText "hyprland_uwsm.desktop" ''
                     [Desktop Entry]
                     Name=Hyprland (with UWSM)
                     Comment=An intelligent dynamic tiling Wayland compositor managed by UWSM
-                    Exec=${lib.getExe self.packages.${system}.default} start -S -- Hyprland
+                    Exec=${lib.getExe test-pkg} start -S -- hyprland.desktop
                     Type=Application
                   '';
-                  hyprland-uwsm = pkgs.stdenvNoCC.mkDerivation {
-                    pname = "hyprland-uwsm";
+                  hyprland_uwsm = pkgs.stdenvNoCC.mkDerivation {
+                    pname = "hyprland_uwsm";
                     version = "1.0.0";
                     dontUnpack = true;
                     dontBuild = true;
                     installPhase = ''
                       mkdir -p $out/share/wayland-sessions
-                      cp ${hyprland-uwsm-text} $out/share/wayland-sessions/hyprland-uwsm.desktop
+                      cp ${hyprland_uwsm-text} $out/share/wayland-sessions/hyprland_uwsm.desktop
                     '';
-                    passthru.providedSessions = ["hyprland-uwsm"];
+                    passthru.providedSessions = ["hyprland_uwsm"];
                   };
-                in [hyprland-uwsm];
+                in [hyprland_uwsm];
 
                 services.displayManager.sddm = {
-                  enable = lib.mkDefault true;
+                  enable = true;
                   wayland = {enable = true;};
                   settings = {
                     Autologin = {
-                      Session = "hyprland-uwsm";
+                      Session = "hyprland_uwsm";
                       User = user;
                     };
                   };
@@ -175,7 +119,7 @@
                   systemPackages =
                     (with pkgs; [foot fuzzel dbus-broker])
                     ++ [
-                      self.packages.${system}.default
+                      test-pkg
                     ];
 
                   variables = {
@@ -235,7 +179,7 @@
                           ExecStart = let
                             wrappedScript = lib.getExe (
                               pkgs.writeShellApplication {
-                                name = "hypridle-script";
+                                name = "env-checker";
                                 # echo environment variables that should be accessible if not error!
                                 # FUTURE: Add a test that checks whether or not hyprland environment variables set
                                 # via env NIXOS_OZONE_WL,1 work even if the env lines come _after_ the exec-once lines!
