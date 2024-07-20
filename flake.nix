@@ -21,7 +21,9 @@
     eachSystem = nixpkgs.lib.genAttrs (import systems);
     pkgsFor = eachSystem (system: (nixpkgs.legacyPackages.${system}.extend devshell.overlays.default));
   in {
-    formatter = eachSystem (system: pkgsFor.${system}.alejandra);
+    nixosModules.uwsm = import ./nix/module.nix;
+    nixosModules.default = self.nixosModules.uwsm;
+    formatter = eachSystem (system: pkgsFor.${system}.nixfmt);
     checks = eachSystem (
       system: let
         pkgs = pkgsFor.${system};
@@ -30,7 +32,7 @@
         pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
           src = ./.;
           hooks = {
-            alejandra.enable = true;
+            nixfmt.enable = true;
             trim-trailing-whitespace.enable = true;
           };
         };
@@ -38,20 +40,11 @@
     );
     packages = eachSystem (system: let
       pkgs = pkgsFor.${system};
-      version = "0.17.0";
     in {
-      default = pkgs.callPackage ./nix/uwsm.nix {
-        inherit version;
-        withHyprland = true;
-      };
-      uwsm-hyprland = pkgs.callPackage ./nix/uwsm.nix {
-        inherit version;
-        withHyprland = true;
-      };
-      uwsm-sway = pkgs.callPackage ./nix/uwsm.nix {
-        inherit version;
-        withSway = true;
-      };
+      default = self.packages.${system}.uwsm-hyprland;
+      uwsm-hyprland =
+        pkgs.callPackage ./nix/uwsm.nix {wayland-compositors = [pkgs.hyprland];};
+
       uwsmTest = pkgs.nixosTest {
         name = "uwsmTest";
         testScript = ''
@@ -62,16 +55,15 @@
         '';
         nodes = {
           node = {
-            config,
             pkgs,
             lib,
             ...
           }: let
             user = "kai";
-            test-pkg = self.packages.${system}.uwsm-hyprland;
           in {
             imports = [
               inputs.home-manager.nixosModules.home-manager
+              self.nixosModules.uwsm
               {
                 boot.kernelPackages = pkgs.linuxPackages_latest;
                 nixpkgs.hostPlatform = "x86_64-linux";
@@ -81,32 +73,35 @@
                   uid = 1000;
                   extraGroups = ["networkmanager" "wheel"];
                 };
-                programs.hyprland.enable = true;
-                services.dbus.implementation = "broker";
-                # THIS should be externalized to a module!
-                services.displayManager.sessionPackages = let
-                  hyprland_uwsm-text = pkgs.writeText "hyprland_uwsm.desktop" ''
-                    [Desktop Entry]
-                    Name=Hyprland (with UWSM)
-                    Comment=An intelligent dynamic tiling Wayland compositor managed by UWSM
-                    Exec=${lib.getExe test-pkg} start -S -- hyprland.desktop
-                    Type=Application
-                  '';
-                  hyprland_uwsm = pkgs.stdenvNoCC.mkDerivation {
-                    pname = "hyprland_uwsm";
-                    version = "1.0.0";
-                    dontUnpack = true;
-                    dontBuild = true;
-                    installPhase = ''
-                      mkdir -p $out/share/wayland-sessions
-                      cp ${hyprland_uwsm-text} $out/share/wayland-sessions/hyprland_uwsm.desktop
-                    '';
-                    passthru.providedSessions = ["hyprland_uwsm"];
-                  };
-                in [hyprland_uwsm];
-
-                services.displayManager.sddm = {
+                programs.hyprland = {
                   enable = true;
+                  # systemd.setPath.enable = true;
+                };
+                programs.sway.enable = true;
+                programs.wayfire.enable = true;
+                programs.uwsm = {
+                  enable = true;
+                  wayland_compositors = {
+                    sway_uwsm = {
+                      compositor_name = "Sway (UWSM)";
+                      compositor_comment = "Sway by UWSM.";
+                      package = pkgs.sway;
+                    };
+                    hyprland_uwsm = {
+                      compositor_name = "Hyprland (UWSM)";
+                      compositor_comment = "An intelligent dynamic tiling Wayland compositor managed by UWSM.";
+                      package = pkgs.hyprland;
+                    };
+                    # TODO: What happens on a conflict .desktop file?!
+                    wayfire_uwsm = {
+                      compositor_name = "Wayfire (UWSM)";
+                      compositor_comment = "Wayfire managed by UWSM.";
+                      package = pkgs.wayfire;
+                    };
+                  };
+                };
+                services.displayManager.sddm = {
+                  enable = true; # HERE: <- Setting that to true enables the writing of the desktop files!
                   wayland = {enable = true;};
                   settings = {
                     Autologin = {
@@ -116,11 +111,7 @@
                   };
                 };
                 environment = {
-                  systemPackages =
-                    (with pkgs; [foot fuzzel dbus-broker])
-                    ++ [
-                      test-pkg
-                    ];
+                  systemPackages = with pkgs; [foot fuzzel dbus-broker];
 
                   variables = {
                     # Seems to work without any issues for me!
@@ -155,14 +146,10 @@
                           "$mod" = lib.mkForce "CTRL";
                           bind = [
                             # Select the default terminal application via xdg-terminal-exec
-                            "$mod, Q, exec, ${lib.getExe self.packages.${system}.default}/bin/uwsm app -- ${lib.getExe pkgs.xdg-terminal-exec}"
+                            "$mod, Q, exec, ${lib.getExe self.packages.${system}.default} app -- ${lib.getExe pkgs.xdg-terminal-exec}"
                           ];
                           exec-once = [
-                            ''
-                              ${
-                                lib.getExe self.packages.${system}.default
-                              } finalize ${lib.strings.escapeShellArgs dbus_environment_variables}
-                            ''
+                            "uwsm finalize"
                           ];
                         };
                       };
@@ -185,7 +172,7 @@
                                 # via env NIXOS_OZONE_WL,1 work even if the env lines come _after_ the exec-once lines!
                                 # echo "$NIXOS_OZONE_WL"
                                 text = ''
-                                  set -exu
+                                  set -eux
 
                                   echo "$DISPLAY"
                                   echo "$WAYLAND_DISPLAY"

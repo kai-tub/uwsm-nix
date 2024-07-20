@@ -13,13 +13,12 @@
   fuzzel,
   libnotify,
   bash,
-  hyprland,
-  sway,
-  withHyprland ? false,
-  withSway ? false,
-  version ? "git",
+  wayland-compositors ? [],
 }:
 stdenv.mkDerivation rec {
+  # there is no need to add the individual wayland compositors
+  # as dependencies, as they should be called via the `.desktop` file
+  # which should ensure that the binaries can be found!
   name = "uwsm";
   meta = {
     description = "A Universal Wayland Session Manager";
@@ -28,7 +27,7 @@ stdenv.mkDerivation rec {
     license = lib.licenses.mit;
     maintainers = with lib.maintainers; [kai-tub];
   };
-  inherit version;
+  version = "0.17.0";
   src = fetchFromGitHub {
     owner = "Vladimir-csp";
     repo = "uwsm";
@@ -84,11 +83,14 @@ stdenv.mkDerivation rec {
   '';
   postInstall = ''
     wrapProgram $out/bin/uwsm \
-      --prefix PATH : ${lib.makeBinPath (
-      (lib.optional withHyprland hyprland)
-      ++ (lib.optional withSway sway)
+      --prefix PATH : ${
+      # (lib.optional withHyprland hyprland)
+      # ++ (lib.optional withSway sway)
       # or should there be different packages depending on the option?
-      ++ propagatedBuildInputs
-    )}
+      lib.makeBinPath (
+        wayland-compositors
+        ++ propagatedBuildInputs
+      )
+    }
   '';
 }
