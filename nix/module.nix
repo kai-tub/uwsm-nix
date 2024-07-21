@@ -158,6 +158,7 @@ in {
         # Need to call the package to ensure that I can pass in the
         # options from the module
         # TODO: Check if this includes the other binaries as well!
+        # (pkgs.callPackage ./uwsm.nix {wayland-compositors = get_compositor_packages cfg.wayland_compositors;})
         (pkgs.callPackage ./uwsm.nix {wayland-compositors = get_compositor_packages cfg.wayland_compositors;})
       ];
       services.displayManager.sessionPackages =
