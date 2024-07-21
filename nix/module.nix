@@ -16,7 +16,6 @@
 # So either, I update the systemd user environment and load the PATH somehow,
 # or I ensure that uwsm has the PATHs available.
 #
-# TODO: Remember to set an option to run `uwsm finalize` !
 # could be an attribute set where the user defines
 # <name>, which will become the <name>.desktop name
 # Name, Comment (for desktop entry)
@@ -152,7 +151,6 @@ in {
       services.dbus = lib.mkIf cfg.use_dbus_broker {
         implementation = "broker";
       };
-      # services.dbus.implementation = lib.mkDefault "broker";
       environment.systemPackages = let
       in [
         # Need to call the package to ensure that I can pass in the
@@ -161,6 +159,16 @@ in {
         # (pkgs.callPackage ./uwsm.nix {wayland-compositors = get_compositor_packages cfg.wayland_compositors;})
         (pkgs.callPackage ./uwsm.nix {wayland-compositors = get_compositor_packages cfg.wayland_compositors;})
       ];
+      # https://github.com/NixOS/nixpkgs/blob/0c53b6b8c2a3e46c68e04417e247bba660689c9d/nixos/modules/services/display-managers/default.nix#L188C5-L188C40
+      # i believe I am screwed.
+      # I need to add a package to the list that needs to wrap
+      # a subset of the list...
+      # The only option I see is to accept the loss and to 'taint' the
+      # systemd user environment to include the binaries of the wayland compositors
+      # or maybe somehow investigate `lib.mkIf` and see if that can provide a solution
+      # in combination with a string as an input to check the providedSessions
+      # TODO: Check first if this would work without the packages if I do set the
+      # default user environment!
       services.displayManager.sessionPackages =
         lib.mapAttrsToList (
           name: value:
