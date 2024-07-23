@@ -13,7 +13,7 @@
   fuzzel,
   libnotify,
   bash,
-  wayland-compositors ? [],
+  elogind,
 }:
 stdenv.mkDerivation rec {
   # there is no need to add the individual wayland compositors
@@ -51,6 +51,7 @@ stdenv.mkDerivation rec {
     fuzzel # fuzzel
     libnotify # notify
     bash # sh
+    elogind # loginctl
     (python3.withPackages (
       ps: [
         ps.pydbus
@@ -84,13 +85,7 @@ stdenv.mkDerivation rec {
   postInstall = ''
     wrapProgram $out/bin/uwsm \
       --prefix PATH : ${
-      # (lib.optional withHyprland hyprland)
-      # ++ (lib.optional withSway sway)
-      # or should there be different packages depending on the option?
-      lib.makeBinPath (
-        wayland-compositors
-        ++ propagatedBuildInputs
-      )
+      lib.makeBinPath propagatedBuildInputs
     }
   '';
 }

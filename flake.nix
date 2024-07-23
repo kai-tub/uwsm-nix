@@ -78,9 +78,9 @@
                   enable = true;
                   wayland_compositors = {
                     hyprland_uwsm = {
-                      compositor_name = "Hyprland (UWSM)";
+                      compositor_pretty_name = "Hyprland (UWSM)";
                       compositor_comment = "An intelligent dynamic tiling Wayland compositor managed by UWSM.";
-                      package = pkgs.hyprland;
+                      compositor_bin_name = "Hyprland";
                     };
                   };
                 };
@@ -127,9 +127,9 @@
                   enable = true;
                   wayland_compositors = {
                     sway_uwsm = {
-                      compositor_name = "Sway (UWSM)";
+                      compositor_pretty_name = "Sway (UWSM)";
                       compositor_comment = "Sway by UWSM.";
-                      package = pkgs.sway;
+                      compositor_bin_name = "sway";
                     };
                   };
                 };
@@ -177,9 +177,9 @@
                   wayland_compositors = {
                     # TODO: What happens on a conflict .desktop file?!
                     wayfire_uwsm = {
-                      compositor_name = "Wayfire (UWSM)";
+                      compositor_pretty_name = "Wayfire (UWSM)";
                       compositor_comment = "Wayfire managed by UWSM.";
-                      package = pkgs.wayfire;
+                      compositor_bin_name = "wayfire";
                     };
                   };
                 };

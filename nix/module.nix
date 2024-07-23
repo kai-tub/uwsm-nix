@@ -9,30 +9,33 @@
 # the issue, as it updates the default environment of the systemd user units
 # to include the PATHs of the given user. I do _not_ like this approach as
 # it may lead to people carelessly writing user units without providing the full
-# path to the binary, which goes against the NixOS principle.
+# path to the binary, which goes against the NixOS principle
+# -> BUT uwsm does activate the user-environment bus and sets PATH, so maybe this isn't
+# really an issue?
+#
+# Currently this is my "best" solution
+# Pro: Clean, easy to follow, does not generate one package for each
+# desktop entry that uses `uwsm`.
+# Con: It 'taints' the default user session manager (but maybe uwsm overwrites it either way)
+# and would be overwritten if somebody re-defines this variable (TODO: Check if this is true!)
+# + there is no easy way to maintain multiple version of the same desktop environment.
+# TODO: Maybe see hyprland nix discussions about this intermediate solution
+# some contexts:
+# - https://github.com/NixOS/nixpkgs/pull/320737
+# - https://github.com/hyprwm/Hyprland/pull/6640
+#
 # For example, what if I have multiple Hyprland versions installed and want to test them?
 # I would like to define the exact package on a module level.
 # Overwrites the current PATH with `env_pre` where only the systemd_vars are kept around
 # So either, I update the systemd user environment and load the PATH somehow,
 # or I ensure that uwsm has the PATHs available.
+# -> Only solution would be to overwrite the desktop environment to include the version number
+# in the binary name and to make sure that it also sets the `sessionPackages`
+# -> But then tools like `hyprctl` and others like `xwayland` also need to be carefully set + linked...
+# -> Just let it be. There will be nobody that would use this feature.
+# It is a rabbit hole. As not only a different version of a compositor needs
+# to be installed but potentially also different portals, meta-packages etc.
 #
-# could be an attribute set where the user defines
-# <name>, which will become the <name>.desktop name
-# Name, Comment (for desktop entry)
-# Compositor-Package -> The main binary could be extracted from getExe
-# which would then be used in `Exec` of desktop entry
-# And the package itself would be added to the list of supported desktop entries
-# -> Would this work for multiple different versions of the same DE ?
-# Not with the same uwsm package. No wait, if the package ONLY contains a SINGLE
-# DE, as it may be overwritten inside of these calls, then it SHOULD be possible
-# to test out multiple versions!
-# The only oddity would be that multiple versions of uwsm are added to the PATH
-# and that the first uwsm in the PATH might not contain the PATH to the compositor
-# BUT after booting, the path to the wayland compositor shouldn't be necessary anymore.
-# So even if this is a bit ugly, it should work just fine.
-#
-# But how do I handle it when somebody wants to use uwsm select?
-# does it still correctly load the desktop entry as is?
 {
   config,
   lib,
@@ -42,39 +45,18 @@
   name = "uwsm";
   cfg = config.programs.${name};
   mk_uwsm_desktop_entry = opts: let
-    # HERE: Yes, it looks like disabling the wayland-compositor option has NO
-    # effect on the output! I am quite convinced
-    # that at least for `uwsm start select` the only important thing is that the
-    # package is available globally. Hmm. Maybe only the desktop ID entry is relevant...
-    # No, at least not for SDDM. There I do need the PATH to boot and auto-boot
-    # Ok, so starting it with `uwsm start sway` does not work, as it is again missing in the PATH
-    # which is what I initially expected
-    # No wait. It does work when the specific `_uwsm` file is loaded.
-    # So maybe it does actually start the correct binary
-    # I really cannot decipher the code...
-    # A possible solution would be to join all packages together for the "main"
-    # uwsm executable. Then that one should work in all instances.
-    # The specialized uwsm desktop entries can be left the way they are.
-    # If there are multiple versions of the same compositor, then my approach
-    # should still work
-    # -> Just let it be. There will be nobody that would use this feature.
-    # It is a rabbit hole. As not only a different version of a compositor needs
-    # to be installed but potentially also different portals, meta-packages etc.
-    new_pkg = cfg.package.override {wayland-compositors = opts.packages;};
-    # new_pkg = cfg.package.override {};
   in (pkgs.writeTextFile {
     name = lib.traceVal "${opts.name}";
     text = let
-      uwsm_pkg = lib.getExe new_pkg;
+      uwsm_pkg = cfg.package;
       # cannot use full path as uwsm doesn't allow it!
       # and also not a desktop entry
-      binary_name = opts.package.meta.mainProgram;
     in
       lib.traceVal ''
         [Desktop Entry]
-        Name=${opts.entry_name}
-        Comment=${opts.comment}
-        Exec=${uwsm_pkg} start -S -- ${binary_name}
+        Name=${opts.compositor_pretty_name}
+        Comment=${opts.compositor_comment}
+        Exec=${uwsm_pkg} start -S -- ${opts.compositor_bin_name}
         Type=Application
       '';
     destination = "/share/wayland-sessions/${opts.name}.desktop";
@@ -109,7 +91,7 @@ in {
           # Name, Comment (for desktop entry)
           # Compositor-Package -> The main binary could be extracted from getExe
           # which would then be used in `Exec` of desktop entry
-          compositor_name = lib.mkOption {
+          compositor_pretty_name = lib.mkOption {
             type = lib.types.str;
             description = "The full name of the desktop entry file.";
             example = "Hyprland (with UWSM)";
@@ -119,33 +101,37 @@ in {
             description = "The comment field of the desktop entry file.";
             example = "An intelligent dynamic tiling Wayland compositor managed by UWSM.";
           };
-          package = lib.mkOption {
-            type = lib.types.package;
-            description = "The wayland-compositor that will be called by UWSM.";
+          compositor_bin_name = lib.mkOption {
+            type = lib.types.str;
+            description = ''
+              The wayland-compositor binary that will be called by UWSM.
+              Important: Do NOT provide a package or full path!
+              It should just be the name of the binary.
+            '';
+            example = "Hyprland";
           };
         };
       }));
     };
   };
   config = let
-    # example =
-    #   mk_uwsm_desktop_entry
-    #   {
-    #     name = "hyprland_uwsm";
-    #     entry_name = "Hyprland (with UWSM)";
-    #     comment = "An intelligent dynamic tiling Wayland compositor managed by UWSM.";
-    #     package = pkgs.hyprland;
-    #   };
-    get_compositor_packages = attrs: lib.mapAttrsToList (_: value: value.package) attrs;
+    # get_compositor_packages = attrs: lib.mapAttrsToList (_: value: value.package) attrs;
   in
     lib.mkIf cfg.enable {
-      # services.displayManager.sessionPackages = [example];
+      # REQUIRED by wayfire: until https://github.com/NixOS/nixpkgs/pull/322312 is merged
+      # otherwise `programs.wayfire.enable = true` should suffice.
+      security.polkit.enable = true;
 
       # If this isn't enabled, then the `providedSessions` aren't evaluated!
       # and the data-dir isn't set either!
       # This is implied in `sddm.enable = true` and was the reason why I didn't
       # see an issue in my 'graphical' tests...
       services.displayManager.enable = true;
+      systemd.user.extraConfig = ''
+        DefaultEnvironment="PATH=${lib.makeBinPath (
+          config.services.displayManager.sessionPackages
+        )}"
+      '';
 
       # TODO: Do the tests pass even if this is disabled?
       services.dbus = lib.mkIf cfg.use_dbus_broker {
@@ -156,28 +142,28 @@ in {
         # Need to call the package to ensure that I can pass in the
         # options from the module
         # TODO: Check if this includes the other binaries as well!
-        # (pkgs.callPackage ./uwsm.nix {wayland-compositors = get_compositor_packages cfg.wayland_compositors;})
-        (pkgs.callPackage ./uwsm.nix {wayland-compositors = get_compositor_packages cfg.wayland_compositors;})
+        (pkgs.callPackage ./uwsm.nix {})
       ];
       # https://github.com/NixOS/nixpkgs/blob/0c53b6b8c2a3e46c68e04417e247bba660689c9d/nixos/modules/services/display-managers/default.nix#L188C5-L188C40
-      # i believe I am screwed.
-      # I need to add a package to the list that needs to wrap
-      # a subset of the list...
-      # The only option I see is to accept the loss and to 'taint' the
-      # systemd user environment to include the binaries of the wayland compositors
-      # or maybe somehow investigate `lib.mkIf` and see if that can provide a solution
-      # in combination with a string as an input to check the providedSessions
-      # TODO: Check first if this would work without the packages if I do set the
-      # default user environment!
+      # Here, I have realized that it will probably not work with _injecting_ the
+      # path of the compositor to uwsm.
+      # The issue is that the compositor packaes that are actually used are also
+      # _dynamic_ and the _real_ version is stored in `sessionPackages` but
+      # to add another package to `sessionPackage` that depends on another sessionPackage
+      # starts a recursion
+      # maybe somehow `lib.mkIf` could help
+      # But at this point I switched the implementation to the `systemd.user` environment
+      # solution
       services.displayManager.sessionPackages =
         lib.mapAttrsToList (
           name: value:
             mk_uwsm_desktop_entry {
               name = name;
-              entry_name = value.compositor_name;
-              comment = value.compositor_comment;
-              package = value.package;
-              packages = get_compositor_packages cfg.wayland_compositors;
+              compositor_pretty_name = value.compositor_pretty_name;
+              compositor_comment = value.compositor_comment;
+              compositor_bin_name = value.compositor_bin_name;
+              # package = value.package;
+              # packages = get_compositor_packages cfg.wayland_compositors;
             }
         )
         cfg.wayland_compositors;
